@@ -113,3 +113,7 @@ async def serve_video(filename: str):
     if os.path.exists(path):
         return FileResponse(path, media_type="video/mp4", filename=filename)
     return {"error": "file not found"}
+
+@app.get("/")
+async def serve_index():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
