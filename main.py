@@ -1,6 +1,5 @@
-
 from fastapi import FastAPI, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse, FileResponse
 import subprocess
 import os
 
@@ -20,17 +19,22 @@ def download_video(
 
     cmd = [
         "yt-dlp",
+        "--progress-template", "Downloading: %(progress._percent_str)s",
         "-o", output_path,
         "--referer", referer,
         "--hls-use-mpegts",
         m3u8_url
     ]
 
-    try:
-        subprocess.run(cmd, check=True)
-        return {"status": "success", "filename": f"{filename}.mp4"}
-    except subprocess.CalledProcessError as e:
-        return {"status": "error", "message": str(e)}
+    def run_ytdlp():
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in process.stdout:
+            yield line
+        process.wait()
+        yield f"\n✅ Download complete. Exit code: {process.returncode}\n"
+
+    return StreamingResponse(run_ytdlp(), media_type="text/plain")
+
 
 @app.get("/video/{filename}")
 def serve_video(filename: str):
