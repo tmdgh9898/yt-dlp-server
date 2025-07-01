@@ -1,40 +1,61 @@
-from fastapi import FastAPI, Form
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import subprocess
 import os
+import uuid
+import threading
+import re
 
 app = FastAPI()
+
 DOWNLOAD_DIR = "./downloads"
+STATIC_DIR = "./static"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# Serve the static HTML/JS
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
+
+# 상태 저장용
+jobs = {}
+
+class DownloadRequest(BaseModel):
+    referer: str
+    video_id: str
+    filename: str
+
 @app.post("/download")
-def download_video(
-    referer: str = Form(...),
-    video_id: str = Form(...),
-    filename: str = Form(...)
-):
-    cdn_prefix = "vz-f9765c3e-82b"
-    m3u8_url = f"https://{cdn_prefix}.b-cdn.net/{video_id}/playlist.m3u8"
-    output_path = os.path.join(DOWNLOAD_DIR, f"{filename}.mp4")
+def start_download(req: DownloadRequest):
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "status": "downloading",
+        "progress": 0,
+        "filename": f"{req.filename}.mp4",
+        "error": None
+    }
+    threading.Thread(target=run_download, args=(job_id, req)).start()
+    return {"job_id": job_id}
 
-    cmd = [
-        "yt-dlp",
-        "--progress-template", "Downloading: %(progress._percent_str)s",
-        "-o", output_path,
-        "--referer", referer,
-        "--hls-use-mpegts",
-        m3u8_url
-    ]
+@app.get("/status/{job_id}")
+def get_status(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        return {"error": "Invalid job_id"}
+    
+    response = {
+        "status": job["status"],
+        "progress": job["progress"],
+        "filename": job["filename"]
+    }
 
-    def run_ytdlp():
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in process.stdout:
-            yield line
-        process.wait()
-        yield f"\n✅ Download complete. Exit code: {process.returncode}\n"
+    if job["status"] == "completed":
+        response["download_url"] = f"/downloads/{job['filename']}"
+    if job["error"]:
+        response["error"] = job["error"]
 
-    return StreamingResponse(run_ytdlp(), media_type="text/plain")
-
+    return response
 
 @app.get("/video/{filename}")
 def serve_video(filename: str):
@@ -42,3 +63,47 @@ def serve_video(filename: str):
     if os.path.exists(path):
         return FileResponse(path, media_type="video/mp4", filename=filename)
     return {"error": "file not found"}
+
+def run_download(job_id, req: DownloadRequest):
+    # 기존처럼 CDN url 생성
+    cdn_prefix = "vz-f9765c3e-82b"
+    m3u8_url = f"https://{cdn_prefix}.b-cdn.net/{req.video_id}/playlist.m3u8"
+    output_path = os.path.join(DOWNLOAD_DIR, f"{req.filename}.mp4")
+
+    cmd = [
+        "yt-dlp",
+        "--progress-template", "%(progress._percent_str)s",
+        "-o", output_path,
+        "--referer", req.referer,
+        "--hls-use-mpegts",
+        m3u8_url
+    ]
+
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    try:
+        for line in process.stdout:
+            percent = parse_progress(line)
+            if percent is not None:
+                jobs[job_id]["progress"] = percent
+        process.wait()
+
+        if process.returncode == 0:
+            jobs[job_id]["status"] = "completed"
+            jobs[job_id]["progress"] = 100
+        else:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"] = f"yt-dlp exited with {process.returncode}"
+
+    except Exception as e:
+        jobs[job_id]["status"] = "error"
+        jobs[job_id]["error"] = str(e)
+
+def parse_progress(line):
+    match = re.search(r'(\d{1,3})%', line)
+    if match:
+        try:
+            return int(match.group(1))
+        except:
+            return None
+    return None
