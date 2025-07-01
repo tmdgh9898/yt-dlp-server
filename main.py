@@ -10,25 +10,28 @@ import re
 
 app = FastAPI()
 
-# 다운로드 경로 설정
+# 다운로드 파일 저장 경로
 DOWNLOAD_DIR = "./downloads"
 STATIC_DIR = "./static"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# 웹 UI 서빙
-app.mount("/web", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+# ✅ 1️⃣ Static 파일 (웹 페이지) 서비스
+# / 요청 시 -> static/index.html 자동 서빙
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+# ✅ 2️⃣ 다운로드된 mp4 파일 서비스
 app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
-# 다운로드 작업 상태 저장소
+# ✅ 3️⃣ 다운로드 작업 상태 저장
 jobs = {}
 
-# 클라이언트가 보내는 요청 형식
+# ✅ 4️⃣ 클라이언트가 보내는 요청 Body 모델
 class DownloadRequest(BaseModel):
     referer: str
     video_id: str
     filename: str
 
-# 다운로드 생성 (비동기 스레드 실행)
+# ✅ 5️⃣ 다운로드 생성 요청
 @app.post("/download")
 async def start_download(req: DownloadRequest):
     job_id = str(uuid.uuid4())
@@ -38,10 +41,11 @@ async def start_download(req: DownloadRequest):
         "filename": f"{req.filename}.mp4",
         "error": None
     }
+    # yt-dlp를 백그라운드 스레드에서 실행
     threading.Thread(target=run_download, args=(job_id, req)).start()
     return {"job_id": job_id}
 
-# 다운로드 진행상황 조회
+# ✅ 6️⃣ 다운로드 진행상황 조회
 @app.get("/status/{job_id}")
 async def get_status(job_id: str):
     job = jobs.get(job_id)
@@ -61,7 +65,7 @@ async def get_status(job_id: str):
 
     return response
 
-# 실제 다운로드 실행 (백그라운드 스레드)
+# ✅ 7️⃣ 실제 다운로드 실행 (백그라운드)
 def run_download(job_id, req: DownloadRequest):
     cdn_prefix = "vz-f9765c3e-82b"
     m3u8_url = f"https://{cdn_prefix}.b-cdn.net/{req.video_id}/playlist.m3u8"
@@ -76,9 +80,8 @@ def run_download(job_id, req: DownloadRequest):
         m3u8_url
     ]
 
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-
     try:
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             percent = parse_progress(line)
             if percent is not None:
@@ -96,7 +99,7 @@ def run_download(job_id, req: DownloadRequest):
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(e)
 
-# yt-dlp 출력에서 % 진행률 파싱
+# ✅ 8️⃣ yt-dlp 로그에서 % 진행률 추출
 def parse_progress(line):
     match = re.search(r'(\d{1,3})%', line)
     if match:
@@ -106,14 +109,10 @@ def parse_progress(line):
             return None
     return None
 
-# 비디오 제공
+# ✅ 9️⃣ 개별 파일 직접 제공 (선택적, 안전장치)
 @app.get("/video/{filename}")
 async def serve_video(filename: str):
     path = os.path.join(DOWNLOAD_DIR, filename)
     if os.path.exists(path):
         return FileResponse(path, media_type="video/mp4", filename=filename)
     return {"error": "file not found"}
-
-@app.get("/")
-async def serve_index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
