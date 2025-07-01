@@ -27,7 +27,7 @@ class DownloadRequest(BaseModel):
     filename: str
 
 @app.post("/download")
-def start_download(req: DownloadRequest):
+async def start_download(req: DownloadRequest):
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "status": "downloading",
@@ -37,6 +37,7 @@ def start_download(req: DownloadRequest):
     }
     threading.Thread(target=run_download, args=(job_id, req)).start()
     return {"job_id": job_id}
+
 
 @app.get("/status/{job_id}")
 def get_status(job_id: str):
