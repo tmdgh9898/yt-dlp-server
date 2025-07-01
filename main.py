@@ -10,25 +10,28 @@ import re
 
 app = FastAPI()
 
+# --------------------
 # 경로 설정
+# --------------------
 STATIC_DIR = "./static"
 DOWNLOAD_DIR = "./downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# ✅ StaticFiles 서비스 경로 분리
-# /static 경로로 JS, CSS, 이미지 등 정적 파일 제공
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# --------------------
+# StaticFiles mount
+# --------------------
+# /static → JS, CSS, 이미지 경로
+app.mount("/static", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
-# ✅ 루트(/) 접속 시 index.html 반환
+# 루트 접속 시 → index.html
 @app.get("/")
 async def serve_index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
-
-# ========================
-# 다운로드 요청/상태 관리
-# ========================
+# --------------------
+# Job 상태 저장
+# --------------------
 jobs = {}
 
 class DownloadRequest(BaseModel):
@@ -36,6 +39,9 @@ class DownloadRequest(BaseModel):
     video_id: str
     filename: str
 
+# --------------------
+# 다운로드 생성 엔드포인트
+# --------------------
 @app.post("/download")
 async def start_download(req: DownloadRequest):
     job_id = str(uuid.uuid4())
@@ -45,9 +51,15 @@ async def start_download(req: DownloadRequest):
         "filename": f"{req.filename}.mp4",
         "error": None
     }
+
+    # yt-dlp 실행 (스레드)
     threading.Thread(target=run_download, args=(job_id, req)).start()
+
     return {"job_id": job_id}
 
+# --------------------
+# 상태 조회 엔드포인트
+# --------------------
 @app.get("/status/{job_id}")
 async def get_status(job_id: str):
     job = jobs.get(job_id)
@@ -62,14 +74,15 @@ async def get_status(job_id: str):
 
     if job["status"] == "completed":
         response["download_url"] = f"/downloads/{job['filename']}"
+
     if job["error"]:
         response["error"] = job["error"]
 
     return response
 
-# ========================
-# yt-dlp 다운로드 실행
-# ========================
+# --------------------
+# yt-dlp 실행 함수
+# --------------------
 def run_download(job_id, req: DownloadRequest):
     cdn_prefix = "vz-f9765c3e-82b"
     m3u8_url = f"https://{cdn_prefix}.b-cdn.net/{req.video_id}/playlist.m3u8"
@@ -103,6 +116,9 @@ def run_download(job_id, req: DownloadRequest):
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(e)
 
+# --------------------
+# 진행률 파싱 함수
+# --------------------
 def parse_progress(line):
     match = re.search(r'(\d{1,3})%', line)
     if match:
@@ -112,10 +128,9 @@ def parse_progress(line):
             return None
     return None
 
-
-# ========================
-# 비디오 단일 파일 직접 제공
-# ========================
+# --------------------
+# 단일 비디오 파일 제공
+# --------------------
 @app.get("/video/{filename}")
 async def serve_video(filename: str):
     path = os.path.join(DOWNLOAD_DIR, filename)
