@@ -10,22 +10,25 @@ import re
 
 app = FastAPI()
 
+# 다운로드 경로 설정
 DOWNLOAD_DIR = "./downloads"
 STATIC_DIR = "./static"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Serve the static HTML/JS
+# 웹 UI 서빙
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
-# 상태 저장용
+# 다운로드 작업 상태 저장소
 jobs = {}
 
+# 클라이언트가 보내는 요청 형식
 class DownloadRequest(BaseModel):
     referer: str
     video_id: str
     filename: str
 
+# 다운로드 생성 (비동기 스레드 실행)
 @app.post("/download")
 async def start_download(req: DownloadRequest):
     job_id = str(uuid.uuid4())
@@ -38,13 +41,13 @@ async def start_download(req: DownloadRequest):
     threading.Thread(target=run_download, args=(job_id, req)).start()
     return {"job_id": job_id}
 
-
+# 다운로드 진행상황 조회
 @app.get("/status/{job_id}")
-def get_status(job_id: str):
+async def get_status(job_id: str):
     job = jobs.get(job_id)
     if not job:
         return {"error": "Invalid job_id"}
-    
+
     response = {
         "status": job["status"],
         "progress": job["progress"],
@@ -58,15 +61,8 @@ def get_status(job_id: str):
 
     return response
 
-@app.get("/video/{filename}")
-def serve_video(filename: str):
-    path = os.path.join(DOWNLOAD_DIR, filename)
-    if os.path.exists(path):
-        return FileResponse(path, media_type="video/mp4", filename=filename)
-    return {"error": "file not found"}
-
+# 실제 다운로드 실행 (백그라운드 스레드)
 def run_download(job_id, req: DownloadRequest):
-    # 기존처럼 CDN url 생성
     cdn_prefix = "vz-f9765c3e-82b"
     m3u8_url = f"https://{cdn_prefix}.b-cdn.net/{req.video_id}/playlist.m3u8"
     output_path = os.path.join(DOWNLOAD_DIR, f"{req.filename}.mp4")
@@ -100,6 +96,7 @@ def run_download(job_id, req: DownloadRequest):
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(e)
 
+# yt-dlp 출력에서 % 진행률 파싱
 def parse_progress(line):
     match = re.search(r'(\d{1,3})%', line)
     if match:
@@ -108,3 +105,11 @@ def parse_progress(line):
         except:
             return None
     return None
+
+# 비디오 제공
+@app.get("/video/{filename}")
+async def serve_video(filename: str):
+    path = os.path.join(DOWNLOAD_DIR, filename)
+    if os.path.exists(path):
+        return FileResponse(path, media_type="video/mp4", filename=filename)
+    return {"error": "file not found"}
