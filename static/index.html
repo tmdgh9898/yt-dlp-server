@@ -41,4 +41,126 @@
       margin-top: 15px;
       padding: 8px 12px;
       background-color: #2196F3;
-      col
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h2>🎬 yt-dlp 서버 다운로드</h2>
+
+  <label for="videoId">Video ID</label>
+  <input type="text" id="videoId" placeholder="예: a1b2c3d4">
+
+  <label for="referer">Referer</label>
+  <input type="text" id="referer" placeholder="예: https://example.com">
+
+  <label for="filename">저장할 파일명</label>
+  <input type="text" id="filename" placeholder="예: myvideo">
+
+  <button id="startBtn">다운로드 시작</button>
+
+  <h3>진행 상황</h3>
+  <progress id="progressBar" value="0" max="100"></progress>
+  <div id="statusText"></div>
+  <div id="downloadLink"></div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const progressBar = document.getElementById('progressBar');
+    const statusText = document.getElementById('statusText');
+    const downloadLink = document.getElementById('downloadLink');
+
+    let jobId = null;
+    let pollInterval = null;
+
+    startBtn.addEventListener('click', async () => {
+      const videoId = document.getElementById('videoId').value.trim();
+      const referer = document.getElementById('referer').value.trim();
+      const filename = document.getElementById('filename').value.trim();
+
+      if (!videoId || !referer || !filename) {
+        alert("모든 필드를 입력해주세요!");
+        return;
+      }
+
+      progressBar.value = 0;
+      statusText.textContent = "서버에 다운로드 요청 중...";
+      downloadLink.innerHTML = "";
+      clearInterval(pollInterval);
+
+      try {
+        const response = await fetch('/download', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            video_id: videoId,
+            referer: referer,
+            filename: filename
+          })
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`서버 오류: ${response.status} ${text}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.job_id) {
+          throw new Error("서버가 job_id를 반환하지 않았습니다!");
+        }
+
+        jobId = data.job_id;
+        statusText.textContent = `✅ Job ID 발급됨: ${jobId}`;
+        pollInterval = setInterval(checkStatus, 2000);
+
+      } catch (error) {
+        statusText.textContent = `❌ 요청 실패: ${error.message}`;
+      }
+    });
+
+    async function checkStatus() {
+      if (!jobId) return;
+      try {
+        const res = await fetch(`/status/${jobId}`);
+        if (!res.ok) {
+          throw new Error(`서버 오류: ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        if (data.error) {
+          clearInterval(pollInterval);
+          statusText.textContent = "❌ 오류: " + data.error;
+          return;
+        }
+
+        if (data.status === "downloading") {
+          progressBar.value = data.progress;
+          statusText.textContent = `⬇️ 다운로드 중... ${data.progress}%`;
+        }
+
+        if (data.status === "completed") {
+          clearInterval(pollInterval);
+          progressBar.value = 100;
+          statusText.textContent = "✅ 다운로드 완료!";
+          downloadLink.innerHTML = `<a href="${data.download_url}" target="_blank" download>파일 다운로드</a>`;
+        }
+
+        if (data.status === "error") {
+          clearInterval(pollInterval);
+          statusText.textContent = "❌ 서버 처리 오류: " + data.error;
+        }
+
+      } catch (err) {
+        clearInterval(pollInterval);
+        statusText.textContent = "❌ 상태 확인 실패: " + err.message;
+      }
+    }
+  </script>
+</body>
+</html>
