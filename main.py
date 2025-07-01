@@ -16,7 +16,7 @@ STATIC_DIR = "./static"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # 웹 UI 서빙
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+app.mount("/web", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 app.mount("/downloads", StaticFiles(directory=DOWNLOAD_DIR), name="downloads")
 
 # 다운로드 작업 상태 저장소
