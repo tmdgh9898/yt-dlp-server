@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>yt-dlp 서버 다운로드</title>
+  <style>
+    body {
+      max-width: 600px;
+      margin: 40px auto;
+      font-family: Arial, sans-serif;
+      line-height: 1.5;
+    }
+    h2 {
+      text-align: center;
+    }
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    progress {
+      width: 100%;
+      height: 20px;
+      margin-top: 10px;
+    }
+    #statusText {
+      margin-top: 10px;
+    }
+    #downloadLink a {
+      display: inline-block;
+      margin-top: 15px;
+      padding: 8px 12px;
+      background-color: #2196F3;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h2>🎬 yt-dlp 다운로드</h2>
+
+  <label for="videoId">Video ID</label>
+  <input type="text" id="videoId" placeholder="예: a1b2c3d4">
+
+  <label for="referer">Referer</label>
+  <input type="text" id="referer" placeholder="예: https://example.com">
+
+  <label for="filename">저장할 파일명</label>
+  <input type="text" id="filename" placeholder="예: myvideo">
+
+  <button id="startBtn">다운로드 시작</button>
+
+  <h3>진행 상황</h3>
+  <progress id="progressBar" value="0" max="100"></progress>
+  <div id="statusText"></div>
+  <div id="downloadLink"></div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const progressBar = document.getElementById('progressBar');
+    const statusText = document.getElementById('statusText');
+    const downloadLink = document.getElementById('downloadLink');
+
+    let jobId = null;
+    let pollInterval = null;
+
+    startBtn.addEventListener('click', async () => {
+      // 입력값 가져오기
+      const videoId = document.getElementById('videoId').value.trim();
+      const referer = document.getElementById('referer').value.trim();
+      const filename = document.getElementById('filename').value.trim();
+
+      if (!videoId || !referer || !filename) {
+        alert("모든 필드를 입력해주세요!");
+        return;
+      }
+
+      // 초기화
+      progressBar.value = 0;
+      statusText.textContent = "서버에 다운로드 요청 중...";
+      downloadLink.innerHTML = "";
+
+      // 서버에 다운로드 요청
+      try {
+        const res = await fetch('/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_id: videoId, referer, filename })
+        });
+        const data = await res.json();
+        jobId = data.job_id;
+        statusText.textContent = `Job ID 발급: ${jobId}`;
+
+        // 폴링 시작
+        pollInterval = setInterval(checkStatus, 2000);
+
+      } catch (err) {
+        statusText.textContent = "오류 발생: " + err;
+      }
+    });
+
+    async function checkStatus() {
+      if (!jobId) return;
+
+      try {
+        const res = await fetch(`/status/${jobId}`);
+        const data = await res.json();
+
+        if (data.error) {
+          clearInterval(pollInterval);
+          statusText.textContent = "에러: " + data.error;
+          return;
+        }
+
+        if (data.status === "downloading") {
+          progressBar.value = data.progress;
+          statusText.textContent = `다운로드 중... ${data.progress}%`;
+        }
+
+        if (data.status === "completed") {
+          clearInterval(pollInterval);
+          progressBar.value = 100;
+          statusText.textContent = "✅ 다운로드 완료!";
+          downloadLink.innerHTML = `<a href="${data.download_url}" target="_blank" download>파일 다운로드</a>`;
+        }
+
+        if (data.status === "error") {
+          clearInterval(pollInterval);
+          statusText.textContent = "❌ 오류: " + data.error;
+        }
+
+      } catch (err) {
+        clearInterval(pollInterval);
+        statusText.textContent = "❌ 서버 통신 오류: " + err;
+      }
+    }
+  </script>
+</body>
+</html>
